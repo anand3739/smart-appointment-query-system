@@ -1,0 +1,304 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  CUSTOMER
+  STAFF
+  ADMIN
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CHECKED_IN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PriorityLevel {
+  NORMAL
+  PRIORITY
+  EMERGENCY
+}
+
+enum QueueStatus {
+  WAITING
+  CALLED
+  SERVING
+  COMPLETED
+  SKIPPED
+  CANCELLED
+}
+
+enum WaitlistStatus {
+  WAITING
+  OFFERED
+  ACCEPTED
+  EXPIRED
+  CANCELLED
+}
+
+enum NotificationType {
+  BOOKING_CONFIRMED
+  BOOKING_REMINDER
+  BOOKING_CANCELLED
+  BOOKING_RESCHEDULED
+  WAITLIST_AVAILABLE
+  QUEUE_CALLED
+  QUEUE_POSITION_CHANGED
+  SERVICE_COMPLETED
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String
+  fullName      String
+  phone         String?
+  role          Role           @default(CUSTOMER)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  appointments  Appointment[]
+  waitlist      WaitlistEntry[]
+  queueEntries  QueueEntry[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  staffBranchId String?
+  staffBranch   Branch?        @relation("StaffBranch", fields: [staffBranchId], references: [id])
+
+  @@index([role])
+  @@index([email])
+}
+
+model Branch {
+  id            String          @id @default(uuid())
+  name          String
+  address       String
+  phone         String
+  email         String
+  isActive      Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  workingHours  WorkingHour[]
+  holidays      Holiday[]
+  resources     Resource[]
+  appointments  Appointment[]
+  queueEntries  QueueEntry[]
+  waitlist      WaitlistEntry[]
+  staffMembers  User[]          @relation("StaffBranch")
+}
+
+model WorkingHour {
+  id          String   @id @default(uuid())
+  branchId    String
+  dayOfWeek   Int      // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+  openTime    String   // "09:00"
+  closeTime   String   // "17:00"
+  breakStart  String?  // "13:00"
+  breakEnd    String?  // "14:00"
+  isClosed    Boolean  @default(false)
+
+  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, dayOfWeek])
+}
+
+model Holiday {
+  id          String   @id @default(uuid())
+  branchId    String
+  date        DateTime @db.Date
+  reason      String
+  
+  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, date])
+}
+
+model Service {
+  id                   String          @id @default(uuid())
+  name                 String
+  description          String
+  durationMinutes      Int             @default(30)
+  price                Decimal         @db.Decimal(10, 2)
+  capacityPerSlot      Int             @default(1)
+  isActive             Boolean         @default(true)
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  requiredResourceType String?         // e.g., "DESK", "ROOM", "BAY", "COUNTER"
+  appointments         Appointment[]
+  queueEntries         QueueEntry[]
+  waitlist             WaitlistEntry[]
+}
+
+model Resource {
+  id            String          @id @default(uuid())
+  branchId      String
+  name          String          // e.g., "Counter 1", "Consultation Room A"
+  type          String          // "COUNTER", "ROOM", "DESK", "BAY"
+  isActive      Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  branch        Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  assignments   AppointmentResource[]
+  queueEntries  QueueEntry[]
+
+  @@unique([branchId, name])
+  @@index([branchId, type, isActive])
+}
+
+model Appointment {
+  id                 String              @id @default(uuid())
+  appointmentNumber  String              @unique // APT-YYYY-XXXXXX
+  customerId         String
+  branchId           String
+  serviceId          String
+  startTime          DateTime
+  endTime            DateTime
+  status             AppointmentStatus   @default(CONFIRMED)
+  notes              String?
+  idempotencyKey     String?             @unique
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  customer           User                @relation(fields: [customerId], references: [id])
+  branch             Branch              @relation(fields: [branchId], references: [id])
+  service            Service             @relation(fields: [serviceId], references: [id])
+  resources          AppointmentResource[]
+  history            AppointmentHistory[]
+  queueEntry         QueueEntry?
+
+  @@index([branchId, startTime, endTime, status])
+  @@index([customerId, status])
+  @@index([appointmentNumber])
+}
+
+model AppointmentResource {
+  id             String       @id @default(uuid())
+  appointmentId  String
+  resourceId     String
+
+  appointment    Appointment  @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  resource       Resource     @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@unique([appointmentId, resourceId])
+  @@index([resourceId])
+}
+
+model AppointmentHistory {
+  id             String             @id @default(uuid())
+  appointmentId  String
+  previousStatus AppointmentStatus?
+  newStatus      AppointmentStatus
+  reason         String?
+  changedById    String?
+  createdAt      DateTime           @default(now())
+
+  appointment    Appointment        @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId, createdAt])
+}
+
+model TemporaryReservation {
+  id             String       @id @default(uuid())
+  branchId       String
+  serviceId      String
+  slotStartTime  DateTime
+  slotEndTime    DateTime
+  userId         String
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+
+  @@index([branchId, serviceId, slotStartTime, expiresAt])
+}
+
+model WaitlistEntry {
+  id             String          @id @default(uuid())
+  customerId     String
+  branchId       String
+  serviceId      String
+  preferredDate  DateTime        @db.Date
+  status         WaitlistStatus  @default(WAITING)
+  offeredSlot    DateTime?
+  offeredAt      DateTime?
+  expiresAt      DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  customer       User            @relation(fields: [customerId], references: [id])
+  branch         Branch          @relation(fields: [branchId], references: [id])
+  service        Service         @relation(fields: [serviceId], references: [id])
+
+  @@index([branchId, serviceId, preferredDate, status, createdAt])
+}
+
+model QueueEntry {
+  id                 String         @id @default(uuid())
+  queueNumber        String         // e.g., "A-012" or "E-001"
+  branchId           String
+  serviceId          String
+  customerId         String?        // Nullable for unregistered walk-ins
+  customerName       String
+  customerPhone      String?
+  appointmentId      String?        @unique
+  assignedResourceId String?
+  priority           PriorityLevel  @default(NORMAL)
+  status             QueueStatus    @default(WAITING)
+  checkInTime        DateTime       @default(now())
+  calledTime         DateTime?
+  serviceStartTime   DateTime?
+  serviceEndTime     DateTime?
+  notes              String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  branch             Branch         @relation(fields: [branchId], references: [id])
+  service            Service        @relation(fields: [serviceId], references: [id])
+  customer           User?          @relation(fields: [customerId], references: [id])
+  appointment        Appointment?   @relation(fields: [appointmentId], references: [id])
+  assignedResource   Resource?      @relation(fields: [assignedResourceId], references: [id])
+
+  @@index([branchId, status, priority, checkInTime])
+  @@index([queueNumber])
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  userId      String
+  type        NotificationType
+  title       String
+  message     String
+  data        Json?
+  isRead      Boolean          @default(false)
+  createdAt   DateTime         @default(now())
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  action      String   // e.g. "APPOINTMENT_CANCELLED", "RESOURCE_ASSIGNED"
+  entityType  String   // "APPOINTMENT", "QUEUE", "SERVICE"
+  entityId    String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}

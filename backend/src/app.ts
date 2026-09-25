@@ -17,8 +17,8 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Swagger Documentation
-app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+// Swagger Documentation (available at /api/docs, /api-docs, and /docs)
+app.use(['/api/docs', '/api-docs', '/docs'], swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 // API Routes
 app.use('/api', routes);

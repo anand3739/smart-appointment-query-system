@@ -41,11 +41,16 @@ export class AvailabilityService {
 
     const slotStartTime = new Date(slotStartTimeStr);
     const slotEndTime = new Date(slotStartTime.getTime() + service.durationMinutes * 60000);
-    const dateStr = slotStartTime.toISOString().split('T')[0];
+    const dateStr = slotStartTimeStr.includes('T')
+      ? slotStartTimeStr.split('T')[0]
+      : slotStartTime.toISOString().split('T')[0];
+
+    const slotTimeStr = slotStartTimeStr.includes('T')
+      ? slotStartTimeStr.split('T')[1].slice(0, 5)
+      : slotStartTime.toISOString().split('T')[1].slice(0, 5);
 
     // Re-verify availability
     const availableSlots = await availabilityRepo.getAvailableSlots(branchId, serviceId, dateStr);
-    const slotTimeStr = slotStartTime.toTimeString().slice(0, 5);
 
     if (!availableSlots.includes(slotTimeStr)) {
       const error: any = new Error('Selected slot is no longer available');
